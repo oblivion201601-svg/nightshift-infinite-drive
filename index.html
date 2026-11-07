@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#091322"><meta name="description" content="NIGHTSHIFT: an endless 3D road-trip racing game with traffic tricks and private online rooms.">
+<title>NIGHTSHIFT // Infinite Drive</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<canvas id="world" aria-label="3D driving game"></canvas>
+<div id="reticle" aria-hidden="true"></div>
+<div id="hud">
+  <header class="topbar">
+    <button id="logo" class="brand" title="Main menu"><span class="brand-diamond">◆</span> NIGHT<span>SHIFT</span><small>INFINITE DRIVE</small></button>
+    <div class="top-actions"><div class="cash-box"><span class="cash-icon">◈</span><strong id="cashTop">0</strong><small>CR</small></div><button id="garageBtn" class="top-btn"><span>▦</span> GARAGE</button><button id="roomBtn" class="top-btn"><span class="online-dot"></span> <span id="roomIndicator">PRIVATE ROOMS</span></button><button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙</button></div>
+  </header>
+  <div class="speed-panel"><div class="speed-kicker">CURRENT SPEED <span id="surfaceStatus">ASPHALT</span></div><div class="speed-big"><strong id="speed">0</strong><span>MPH</span></div><div id="speedBar" class="speed-bar"><div></div></div><div class="speed-sub"><span id="carLabel">COURIER X</span><span id="distance">0.0 MI</span></div></div>
+  <aside class="streak"><div class="streak-top">TRICK CHAIN <strong id="multiplier">×1.0</strong></div><div id="chainScore" class="streak-score">0 <small>PTS</small></div><div id="streakMeter" class="streak-meter"><div></div></div><div id="trickDetail" class="streak-caption">Drift · Near miss · Jump · Weave</div></aside>
+  <div id="trickFeed" aria-live="polite"></div>
+  <div class="bottom-left"><div id="miniRoad" aria-label="Road mini-map"><canvas id="mapCanvas" width="170" height="136"></canvas><div>ROUTE SCAN</div></div><div id="helpStrip"><span>WASD / ARROWS <b>DRIVE</b></span><span>SPACE <b>DRIFT</b></span><span>C <b>CAMERA</b></span><span>R <b>RESET</b></span></div></div>
+  <div class="bottom-right"><div id="regionLabel">ENDLESS HIGHWAY <span>·</span> FREE ROAM</div><div id="connectionStatus">SOLO SESSION</div></div>
+</div>
+<div id="touchControls" class="touch-controls hidden" aria-label="Mobile driving controls">
+  <div class="mobile-steering">
+    <div class="steering-options"><button data-steer="arrows">ARROWS</button><button data-steer="wheel">WHEEL</button><button data-steer="tilt">TILT</button></div>
+    <div id="arrowsSteer" class="arrows-steer"><button data-control="left" class="control-arrow" aria-label="Steer left">‹</button><button data-control="right" class="control-arrow" aria-label="Steer right">›</button></div>
+    <div id="wheelSteer" class="wheel-steer hidden"><div id="wheelControl" role="slider" aria-label="Steering wheel" aria-valuemin="-100" aria-valuemax="100"><div class="wheel-ring"><div class="wheel-hub">◆</div><span class="spoke spoke-a"></span><span class="spoke spoke-b"></span><span class="spoke spoke-c"></span></div></div></div>
+    <div id="tiltSteer" class="tilt-steer hidden"><div class="tilt-icon">◈</div><strong id="tiltValue">TILT TO STEER</strong><button id="enableTilt">ENABLE / RECALIBRATE</button></div>
+  </div>
+  <div class="mobile-pedals"><button id="driftTouch" class="drift-touch">DRIFT</button><button data-control="brake" class="pedal brake"><span>Ⅱ</span>BRAKE</button><button data-control="throttle" class="pedal gas"><span>↑</span>GAS</button></div>
+</div>
+<div class="utility-buttons"><button id="cameraBtn" title="Change camera">◉ <span>CAM</span></button><button id="resetBtn" title="Reset car">↻ <span>RESET</span></button></div>
+<div id="notifications" aria-live="polite"></div>
+<div id="overlay" class="overlay open">
+ <div id="menu" class="modal menu-modal">
+  <div class="menu-eyebrow"><span></span> DRIVE BEYOND THE HORIZON</div>
+  <h1>NIGHT<span>SHIFT</span><i>∞</i></h1><p class="hero-description">One highway. No finish line. Endless corners, passing traffic and ramps. Chase a bigger trick chain, earn credits, and fill your garage.</p>
+  <div class="hero-stats"><span><b>∞</b> ROAD</span><span><b>20</b> CARS</span><span><b>12</b> DRIVERS / ROOM</span></div>
+  <div class="menu-actions"><button id="driveBtn" class="primary-btn">START DRIVING <span>↗</span></button><button id="menuMultiplayer" class="secondary-btn">PLAY WITH FRIENDS <span>⌁</span></button></div>
+  <div class="menu-bottom"><span>DRIFT, WEAVE, GET AIR — EARN CR FOR NEW RIDES</span><span id="menuVersion">v1.0 · BROWSER EDITION</span></div>
+ </div>
+ <div id="garage" class="modal garage-modal hidden"><div class="modal-heading"><div><div class="eyebrow">COLLECT · UNLOCK · UPGRADE YOUR RIDE</div><h2>YOUR GARAGE <span id="garageCount">1 / 20</span></h2></div><button class="close-btn" data-close>✕</button></div><div class="garage-layout"><div class="car-list" id="carList"></div><div class="car-details"><div id="carPreview" class="car-preview"><div class="preview-road"></div><div id="carIllustration" class="car-illustration"><div class="car-glass"></div><div class="car-front"></div><div class="car-tires"></div></div><span id="carClass">STREET</span></div><div class="car-meta"><div class="car-number" id="carNumber">CAR 01 / 20</div><h3 id="detailName">Courier X</h3><p id="detailDesc"></p></div><div id="statBars" class="stat-bars"></div><div class="purchase-row"><div><small>PRICE</small><strong id="carPrice">FREE</strong></div><button id="buyCarBtn" class="primary-btn">SELECT CAR</button></div></div></div></div>
+ <div id="rooms" class="modal room-modal hidden"><div class="modal-heading"><div><div class="eyebrow">CRUISE WITH YOUR CREW</div><h2>PRIVATE ROOMS</h2></div><button class="close-btn" data-close>✕</button></div><div id="roomsOffline" class="rooms-content"><p class="modal-subtitle">Create a password-protected room, then send your friends the six-character invite code. Everyone joins the same live highway.</p><label>DRIVER NAME<input id="playerName" maxlength="20" value="Driver" autocomplete="nickname"></label><div class="two-col"><label>ROOM NAME<input id="createRoomName" maxlength="36" placeholder="Midnight cruise" value="Midnight cruise"></label><label>ROOM PASSWORD<input id="createPassword" type="password" minlength="4" maxlength="64" placeholder="At least 4 characters"></label></div><button id="createRoomBtn" class="primary-btn wide">CREATE PRIVATE ROOM</button><div class="or-divider">OR JOIN A FRIEND</div><div class="two-col"><label>INVITE CODE<input id="joinCode" maxlength="6" placeholder="AB2CD3" autocapitalize="characters" class="code-input"></label><label>PASSWORD<input id="joinPassword" type="password" placeholder="Room password"></label></div><button id="joinRoomBtn" class="secondary-btn wide">JOIN ROOM</button><div class="room-note" id="serverNote">Online rooms require running the included Node.js server.</div></div><div id="roomsOnline" class="rooms-content hidden"><div class="room-invite"><div><small>YOUR ROOM INVITE CODE</small><div id="roomCodeBig">------</div></div><button id="copyInvite" class="secondary-btn">COPY INVITE</button></div><div class="room-member-heading">DRIVERS IN ROOM <span id="memberCount">1 / 12</span></div><div id="memberList" class="member-list"></div><div class="chat-panel"><div id="chatHistory" class="chat-history"></div><div class="chat-entry"><input id="chatInput" maxlength="160" placeholder="Message your crew..."><button id="chatSend" aria-label="Send chat">SEND</button></div></div><button id="leaveRoomBtn" class="danger-btn">LEAVE ROOM</button></div></div>
+ <div id="settings" class="modal settings-modal hidden"><div class="modal-heading"><div><div class="eyebrow">TUNE YOUR EXPERIENCE</div><h2>SETTINGS</h2></div><button class="close-btn" data-close>✕</button></div><div class="setting-group"><label class="setting-line"><span>Driving assists<small>Gently aligns car with curved roads</small></span><input type="checkbox" id="assistToggle" checked></label><label class="setting-line"><span>Traffic density<small>Affects traffic frequency and near misses</small></span><select id="trafficSelect"><option value="0.45">Light</option><option value="0.75" selected>Normal</option><option value="1">Heavy</option></select></label><label class="setting-line"><span>Graphics quality<small>Reduce for better mobile frame rate</small></span><select id="qualitySelect"><option value="low">Battery saver</option><option value="medium" selected>Balanced</option><option value="high">High</option></select></label><label class="setting-line"><span>Audio engine<small>Synthesized engine and trick sounds</small></span><input type="checkbox" id="audioToggle"></label><label class="setting-line"><span>Speed units</span><select id="unitSelect"><option value="mph">MPH</option><option value="kmh">KM/H</option></select></label><label class="setting-line"><span>Mobile controls<small>Show even with a keyboard connected</small></span><input type="checkbox" id="mobileToggle"></label></div><div class="controls-reference"><b>CONTROL REFERENCE</b><p><strong>Keyboard:</strong> W/S accelerate/brake · A/D steer · Space handbrake · C camera · R reset · Esc menu</p><p><strong>Controller:</strong> left stick steering · RT/R2 gas · LT/L2 brake · A/Cross handbrake · Y/Triangle camera</p><p><strong>Mobile:</strong> choose arrows, draggable wheel, or phone tilt · dedicated gas, brake and drift buttons</p></div></div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
