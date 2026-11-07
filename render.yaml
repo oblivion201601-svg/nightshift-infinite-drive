@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: nightshift-infinite-drive
+    runtime: node
+    plan: free
+    region: ohio
+    buildCommand: npm install --no-audit --no-fund
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
