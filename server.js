@@ -10,6 +10,9 @@ const HOST=process.env.HOST||'0.0.0.0';
 const WEBROOT=path.resolve(__dirname,'public');
 const rooms=new Map();
 const peers=new Set();
+// Mobile app switching temporarily disconnects WebSockets; reserve rooms for ten minutes.
+const ROOM_GRACE_MS=10*60*1000;
+const resumable=new Map();
 const MAX_PLAYERS=12;
 const TYPES={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.json':'application/json','.ico':'image/x-icon','.png':'image/png','.webp':'image/webp','.webmanifest':'application/manifest+json'};
 const server=http.createServer((req,res)=>{
@@ -32,18 +35,51 @@ const clean=(s,n=26)=>String(s||'').replace(/[<>\u0000-\u001F]/g,'').trim().slic
 const roomCode=()=>{const alphabet='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';let s;do{s=Array.from(crypto.randomBytes(6),v=>alphabet[v%alphabet.length]).join('')}while(rooms.has(s));return s};
 const broadcast=(room,obj,except)=>{for(const p of room.players)if(p!==except)p.send(obj)};
 function member(p){return {id:p.id,name:p.name,carId:p.carId,host:p.room?.host===p}}
-function joined(p,room){p.send({t:'joined',code:room.code,roomName:room.name,you:p.id,host:room.host===p,maxPlayers:MAX_PLAYERS,players:[...room.players].map(member)});broadcast(room,{t:'members',players:[...room.players].map(member)})}
-function leave(p){const room=p.room;if(!room)return;room.players.delete(p);p.room=null;if(room.host===p)room.host=[...room.players][0]||null;if(!room.players.size)rooms.delete(room.code);else broadcast(room,{t:'members',players:[...room.players].map(member),notice:p.name+' left the room'});}
+function joined(p,room){
+ p.resumeToken=p.resumeToken||crypto.randomBytes(24).toString('hex');
+ room.emptyAt=null;
+ p.send({t:'joined',code:room.code,roomName:room.name,you:p.id,host:room.host===p,maxPlayers:MAX_PLAYERS,players:[...room.players].map(member),resumeToken:p.resumeToken});
+ broadcast(room,{t:'members',players:[...room.players].map(member)})
+}
+function leave(p,temporary=false){
+ const room=p.room;if(!room)return;
+ room.players.delete(p);p.room=null;
+ if(temporary&&p.resumeToken){
+  resumable.set(p.resumeToken,{code:room.code,id:p.id,name:p.name,carId:p.carId,expires:Date.now()+ROOM_GRACE_MS});
+ }else if(p.resumeToken)resumable.delete(p.resumeToken);
+ p.resumeToken=null;
+ if(room.host===p)room.host=[...room.players][0]||null;
+ if(!room.players.size){
+  room.emptyAt=Date.now();
+  if(!temporary&&![...resumable.values()].some(r=>r.code===room.code))rooms.delete(room.code);
+ }else broadcast(room,{t:'members',players:[...room.players].map(member),notice:p.name+(temporary?' disconnected from':' left')+' the room'});
+}
 function handleMessage(p,m){
  if(!m||typeof m!=='object'||!m.t)return;
  const now=Date.now();if(now-p.rateWindow>1000){p.rateWindow=now;p.rateCount=0}if(++p.rateCount>90)return;
  if(m.t==='ping'){p.send({t:'pong'});return}
+ if(m.t==='resume'){
+  if(p.room)return p.send({t:'error',message:'Already in a room.'});
+  const token=typeof m.token==='string'&&/^[0-9a-f]{48}$/.test(m.token)?m.token:'';
+  const previous=[...peers].find(peer=>peer!==p&&peer.resumeToken===token&&peer.room);
+  if(previous)previous.close();
+  const session=resumable.get(token);
+  const room=session&&rooms.get(session.code);
+  if(!session||!room||Date.now()>session.expires){
+   resumable.delete(token);
+   return p.send({t:'resume_failed',message:'Room session expired. Enter your invite code and password to join again.'});
+  }
+  if(room.players.size>=MAX_PLAYERS)return p.send({t:'resume_failed',message:'Room is full. Try joining again.'});
+  resumable.delete(token);
+  p.id=session.id;p.name=session.name;p.carId=session.carId;p.resumeToken=token;p.room=room;
+  room.players.add(p);if(!room.host)room.host=p;joined(p,room);return;
+ }
  if(m.t==='create'){
   if(p.room)return p.send({t:'error',message:'Leave your current room first.'});
   const name=clean(m.name,20)||'Driver',title=clean(m.roomName,36)||'Private cruise';const password=String(m.password||'');
   if(password.length<4||password.length>64)return p.send({t:'error',message:'Password must contain 4–64 characters.'});
   const salt=crypto.randomBytes(16);const hash=crypto.scryptSync(password,salt,32);
-  const room={code:roomCode(),name:title,salt,hash,players:new Set(),host:p,created:now};rooms.set(room.code,room);
+  const room={code:roomCode(),name:title,salt,hash,players:new Set(),host:p,created:now,emptyAt:null};rooms.set(room.code,room);
   p.name=name;p.carId=clamp(Math.trunc(Number(m.carId)||0),0,19);p.room=room;room.players.add(p);joined(p,room);
  }else if(m.t==='join'){
   if(p.room)return p.send({t:'error',message:'Leave your current room first.'});
@@ -53,7 +89,7 @@ function handleMessage(p,m){
   const pw=String(m.password||'');if(pw.length>64)return p.send({t:'error',message:'Incorrect password.'});
   const attempt=crypto.scryptSync(pw,room.salt,32);
   if(!crypto.timingSafeEqual(attempt,room.hash))return p.send({t:'error',message:'Incorrect room password.'});
-  p.name=clean(m.name,20)||'Driver';p.carId=clamp(Math.trunc(Number(m.carId)||0),0,19);p.room=room;room.players.add(p);joined(p,room);
+  p.name=clean(m.name,20)||'Driver';p.carId=clamp(Math.trunc(Number(m.carId)||0),0,19);p.room=room;room.players.add(p);if(!room.host)room.host=p;joined(p,room);
   broadcast(room,{t:'notice',text:p.name+' joined the cruise.'},p);
  }else if(m.t==='leave'){
   leave(p);p.send({t:'left'});
@@ -72,7 +108,7 @@ function handleMessage(p,m){
  }
 }
 class Peer{
- constructor(socket){this.socket=socket;this.buf=Buffer.alloc(0);this.id=crypto.randomBytes(5).toString('hex');this.name='Driver';this.room=null;this.carId=0;this.state=null;this.rateWindow=Date.now();this.rateCount=0;this.lastChat=0;this.closed=false;
+ constructor(socket){this.socket=socket;this.buf=Buffer.alloc(0);this.resumeToken=null;this.id=crypto.randomBytes(5).toString('hex');this.name='Driver';this.room=null;this.carId=0;this.state=null;this.rateWindow=Date.now();this.rateCount=0;this.lastChat=0;this.closed=false;
   socket.on('data',chunk=>this.read(chunk));socket.on('error',()=>this.close());socket.on('close',()=>this.close());peers.add(this);
  }
  send(obj){if(this.closed)return;const payload=Buffer.from(JSON.stringify(obj));let head;if(payload.length<126){head=Buffer.from([0x81,payload.length])}else if(payload.length<65536){head=Buffer.alloc(4);head[0]=0x81;head[1]=126;head.writeUInt16BE(payload.length,2)}else{head=Buffer.alloc(10);head[0]=0x81;head[1]=127;head.writeBigUInt64BE(BigInt(payload.length),2)}try{this.socket.write(Buffer.concat([head,payload]))}catch{this.close()}}
@@ -87,7 +123,7 @@ class Peer{
    try{handleMessage(this,JSON.parse(data.toString('utf8')))}catch{this.send({t:'error',message:'Invalid message.'})}
   }
  }
- close(){if(this.closed)return;this.closed=true;leave(this);peers.delete(this);try{this.socket.destroy()}catch{}}
+ close(){if(this.closed)return;this.closed=true;leave(this,true);peers.delete(this);try{this.socket.destroy()}catch{}}
 }
 server.on('upgrade',(req,socket)=>{
  if(req.url.split('?')[0]!=='/ws'||req.headers.upgrade?.toLowerCase()!=='websocket'||req.headers['sec-websocket-version']!=='13')return socket.destroy();
@@ -95,6 +131,11 @@ server.on('upgrade',(req,socket)=>{
  const accept=crypto.createHash('sha1').update(key+'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64');
  socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: '+accept+'\r\n\r\n');new Peer(socket);
 });
+setInterval(()=>{
+ const now=Date.now();
+ for(const [token,session] of resumable)if(session.expires<=now||!rooms.has(session.code))resumable.delete(token);
+ for(const [code,room] of rooms)if(!room.players.size&&room.emptyAt&&now-room.emptyAt>=ROOM_GRACE_MS)rooms.delete(code);
+},10000).unref();
 setInterval(()=>{
  for(const room of rooms.values()){
   const states=[];

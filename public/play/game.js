@@ -116,7 +116,7 @@ function drive(dt){const c=CARS[state.carId],inp=controlInputs(dt);const maxSpee
  if(state.prefs.audio&&engineGain&&audioCtx){engineOsc.frequency.setTargetAtTime(48+player.speed*3,audioCtx.currentTime,.09);engineGain.gain.setTargetAtTime(trap()?0:.016+player.speed*.0004,audioCtx.currentTime,.08)}
 }
 function refreshHUD(t){if(t-lastHud<75)return;lastHud=t;const c=CARS[state.carId],scale=state.prefs.unit==='kmh'?3.6:2.237;const maxSpeed=state.prefs.unit==='kmh'?c.speed*1.60934:c.speed;
- ui.speed.textContent=Math.round(player.speed*scale);ui.speed.nextElementSibling.textContent=state.prefs.unit==='kmh'?'KM/H':'MPH';ui.speedBar.style.width=Math.min(100,player.speed*scale/maxSpeed*100)+'%';ui.money.textContent=money(state.credits);ui.car.textContent=c.name.toUpperCase();ui.distance.textContent=state.prefs.unit==='kmh'?(state.distance*1.60934).toFixed(1)+' KM':state.distance.toFixed(1)+' MI';ui.mult.textContent='×'+(1+Math.min(4,player.chain*.24)).toFixed(1);ui.pts.innerHTML=money(player.chainPoints)+' <small>PTS</small>';ui.meter.style.width=(player.chain?Math.max(0,(11-player.chainAge)/11*100):0)+'%';$('surfaceStatus').textContent=player.grounded?(Math.abs(player.x-roadX(player.z))>ROAD_HALF?'GRAVEL':player.driftTime>.25?'DRIFTING':'ASPHALT'):'AIRBORNE';$('carLabel').textContent=c.name.toUpperCase();$('connectionStatus').textContent=state.room?`${state.room.code} · ${state.room.players.length} DRIVER${state.room.players.length===1?'':'S'}`:'SOLO SESSION';$('roomIndicator').textContent=state.room?state.room.code:'PRIVATE ROOMS';document.querySelector('.online-dot').classList.toggle('connected',!!state.room);}
+ ui.speed.textContent=Math.round(player.speed*scale);ui.speed.nextElementSibling.textContent=state.prefs.unit==='kmh'?'KM/H':'MPH';ui.speedBar.style.width=Math.min(100,player.speed*scale/maxSpeed*100)+'%';ui.money.textContent=money(state.credits);ui.car.textContent=c.name.toUpperCase();ui.distance.textContent=state.prefs.unit==='kmh'?(state.distance*1.60934).toFixed(1)+' KM':state.distance.toFixed(1)+' MI';ui.mult.textContent='×'+(1+Math.min(4,player.chain*.24)).toFixed(1);ui.pts.innerHTML=money(player.chainPoints)+' <small>PTS</small>';ui.meter.style.width=(player.chain?Math.max(0,(11-player.chainAge)/11*100):0)+'%';$('surfaceStatus').textContent=player.grounded?(Math.abs(player.x-roadX(player.z))>ROAD_HALF?'GRAVEL':player.driftTime>.25?'DRIFTING':'ASPHALT'):'AIRBORNE';$('carLabel').textContent=c.name.toUpperCase();$('connectionStatus').textContent=state.room?(state.connected?`${state.room.code} · ${state.room.players.length} DRIVER${state.room.players.length===1?'':'S'}`:`${state.room.code} · RECONNECTING`):'SOLO SESSION';$('roomIndicator').textContent=state.room?state.room.code:'PRIVATE ROOMS';document.querySelector('.online-dot').classList.toggle('connected',!!state.room&&state.connected);}
 // -------- WEBGL RENDERER --------
 const gl=canvas.getContext('webgl',{alpha:true,antialias:true,powerPreference:'high-performance',preserveDrawingBuffer:false});
 if(!gl){const er=document.createElement('div');er.style.cssText='position:fixed;inset:40%;z-index:90;padding:20px;background:#101d2a;color:white';er.textContent='WebGL is not available. Try a current version of Safari, Chrome or Edge with graphics acceleration enabled.';document.body.append(er);return}
@@ -205,32 +205,61 @@ function minimap(){const c=$('mapCanvas'),cx=c.getContext('2d');const w=c.width,
 function frameLoop(now){let dt=clamp((now-clock)/1000,0,.045);clock=now;elapsed+=dt;frame++;if(state.playing)drive(dt);else gamepadInput();render(dt||.016);refreshHUD(now);if(now-lastMap>180){lastMap=now;minimap()}if(elapsed-lastSave>14){lastSave=elapsed;save()}requestAnimationFrame(frameLoop)}
 // -------- PRIVATE MULTIPLAYER ROOMS --------
 function sendWS(message){if(state.ws?.readyState===WebSocket.OPEN){state.ws.send(JSON.stringify(message));return true}return false}
-let pendingRoom=null,connecting=null;
+// A short-lived room session survives switching to Messages or another app on mobile.
+const roomSessionKey='nightshift-room-session-v2';
+let resumeToken=null,reconnectTimer=null,reconnectDelay=1200,connecting=null;
+try{resumeToken=sessionStorage.getItem(roomSessionKey)}catch{}
+function rememberRoomToken(token){
+ resumeToken=token;
+ try{if(token)sessionStorage.setItem(roomSessionKey,token);else sessionStorage.removeItem(roomSessionKey)}catch{}
+}
+function scheduleReconnect(){
+ if(!resumeToken||reconnectTimer||document.hidden)return;
+ reconnectTimer=setTimeout(()=>{reconnectTimer=null;if(!resumeToken||state.ws?.readyState===WebSocket.OPEN)return;
+  connectWS().catch(()=>{reconnectDelay=Math.min(12000,Math.round(reconnectDelay*1.5));scheduleReconnect()});
+ },reconnectDelay);
+}
+function retryOnReturn(){
+ if(resumeToken&&state.ws?.readyState!==WebSocket.OPEN){
+  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null}
+  connectWS().catch(scheduleReconnect);
+ }
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)retryOnReturn()});
+window.addEventListener('pageshow',retryOnReturn);
+window.addEventListener('focus',retryOnReturn);
 function connectWS(){if(state.ws?.readyState===WebSocket.OPEN)return Promise.resolve();if(connecting)return connecting;if(!/^https?:$/.test(location.protocol))return Promise.reject(Error('Open this game using the included Node.js server to host online rooms.'));
  connecting=new Promise((resolve,reject)=>{const secure=location.protocol==='https:',url=(secure?'wss:':'ws:')+'//'+location.host+'/ws';let sock;try{sock=new WebSocket(url)}catch(e){connecting=null;reject(e);return}let timeout=setTimeout(()=>{try{sock.close()}catch{};connecting=null;reject(Error('Could not reach game server. Start node server.js first.'))},5000);
- sock.addEventListener('open',()=>{clearTimeout(timeout);state.ws=sock;state.connected=true;connecting=null;resolve()});sock.addEventListener('message',e=>{try{handleServerMessage(JSON.parse(e.data))}catch(err){console.warn('Server message:',err)}});sock.addEventListener('close',()=>{clearTimeout(timeout);if(state.ws===sock){const had=!!state.room;state.ws=null;state.connected=false;state.room=null;state.remote.clear();if(had)notify('Disconnected from private room. Solo driving continues.');if(state.modal==='rooms')renderRoom()}});sock.addEventListener('error',()=>{});
+ sock.addEventListener('open',()=>{clearTimeout(timeout);state.ws=sock;state.connected=true;connecting=null;reconnectDelay=1200;resolve();if(resumeToken)sendWS({t:'resume',token:resumeToken})});sock.addEventListener('message',e=>{try{handleServerMessage(JSON.parse(e.data))}catch(err){console.warn('Server message:',err)}});sock.addEventListener('close',()=>{clearTimeout(timeout);if(state.ws===sock){state.ws=null;state.connected=false;state.remote.clear();if(resumeToken){notify('Connection interrupted. Room reserved; rejoining…');scheduleReconnect()}else{state.room=null;}if(state.modal==='rooms')renderRoom()}});sock.addEventListener('error',()=>{});
  }) ;return connecting}
 async function requestRoom(t,extra){try{await connectWS();const request={t,name:$('playerName').value.trim()||'Driver',carId:state.carId,...extra};sendWS(request)}catch(e){notify(e.message);$('serverNote').textContent=e.message}}
 $('createRoomBtn').addEventListener('click',()=>{const password=$('createPassword').value;if(password.length<4){notify('Room password must be at least 4 characters.');return}requestRoom('create',{roomName:$('createRoomName').value||'Private cruise',password})});
 $('joinRoomBtn').addEventListener('click',()=>{const code=$('joinCode').value.trim().toUpperCase();if(code.length!==6){notify('Enter a six-character invite code.');return}requestRoom('join',{code,password:$('joinPassword').value})});
-$('leaveRoomBtn').onclick=()=>{sendWS({t:'leave'});state.room=null;state.remote.clear();renderRoom();notify('You left the private room.');};
-$('copyInvite').onclick=async()=>{if(!state.room)return;const c=state.room.code,url=location.origin+'/play/?room='+encodeURIComponent(c);try{await navigator.clipboard.writeText(`NIGHTSHIFT private room: ${c}\nJoin: ${url}\nPassword: ask me for it privately.`);notify('Invite code and join link copied.')}catch{window.prompt('Share this invite code (password separately):',c)}};
+$('leaveRoomBtn').onclick=()=>{sendWS({t:'leave'});rememberRoomToken(null);state.room=null;state.remote.clear();renderRoom();notify('You left the private room.');};
+function inviteText(){if(!state.room)return '';const c=state.room.code,url=location.origin+'/play/?room='+encodeURIComponent(c);return `NIGHTSHIFT private room: ${c}\nJoin: ${url}\nPassword: ask me for it privately.`}
+async function copyInvite(){if(!state.room)return;const invitation=inviteText();try{if(!navigator.clipboard?.writeText)throw Error('Clipboard unavailable');await navigator.clipboard.writeText(invitation);notify('Invite link copied. Your room stays open.')}catch{
+ const field=document.createElement('textarea');field.value=invitation;field.setAttribute('readonly','');field.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;opacity:0';document.body.append(field);field.select();let copied=false;try{copied=document.execCommand('copy')}catch{}field.remove();if(copied)notify('Invite link copied. Your room stays open.');else window.prompt('Copy this invite link (send password separately):',invitation);
+}}
+$('copyInvite').onclick=e=>{e.preventDefault();copyInvite()};
+$('shareInvite').onclick=async e=>{e.preventDefault();if(!state.room)return;if(navigator.share){try{await navigator.share({title:'NIGHTSHIFT private room',text:inviteText()});notify('Invite shared. Your room stays open.')}catch(err){if(err.name!=='AbortError')copyInvite()}}else copyInvite()};
 function addChat(name,text,isNotice=false){const row=document.createElement('div'),who=document.createElement('b');if(isNotice){row.textContent=text;row.style.color='#ffc88f'}else{who.textContent=name+': ';row.append(who,document.createTextNode(text))}const c=$('chatHistory');c.append(row);c.scrollTop=c.scrollHeight;while(c.children.length>35)c.firstElementChild.remove()}
 function sendChat(){const box=$('chatInput'),text=box.value.trim();if(!text)return;sendWS({t:'chat',text});box.value=''}$('chatSend').onclick=sendChat;$('chatInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat()}});
 function renderRoom(){const active=!!state.room;$('roomsOffline').classList.toggle('hidden',active);$('roomsOnline').classList.toggle('hidden',!active);if(!active)return;$('roomCodeBig').textContent=state.room.code;$('memberCount').textContent=state.room.players.length+' / 12';const list=$('memberList');list.replaceChildren();for(const p of state.room.players){const row=document.createElement('div');row.className='member-row';const n=document.createElement('span');n.textContent=p.name+(p.id===state.myId?' (YOU)':'');const tag=document.createElement('small');tag.textContent=p.host?'HOST':CARS[p.carId]?.name.toUpperCase()||'DRIVER';row.append(n,tag);if(state.room.host&&p.id!==state.myId){const b=document.createElement('button');b.textContent='KICK';b.onclick=()=>sendWS({t:'kick',id:p.id});row.append(b)}list.append(row)}}
 function handleServerMessage(m){if(!m||typeof m!=='object')return;
+ if(m.t==='resume_failed'){rememberRoomToken(null);state.room=null;state.remote.clear();notify(m.message||'Room session expired.');if(state.modal==='rooms')renderRoom();return}
  if(m.t==='error'){notify(m.message||'Room error');return}
- if(m.t==='joined'){state.myId=m.you;state.room={code:m.code,name:m.roomName,host:!!m.host,players:m.players||[]};state.remote.clear();$('chatHistory').replaceChildren();addChat('',`Connected to ${m.roomName}. Share the invite code and password.`,true);renderRoom();notify('Room '+m.code+' created/joined. You are online.');return}
+ if(m.t==='joined'){rememberRoomToken(m.resumeToken||null);state.connected=true;state.myId=m.you;state.room={code:m.code,name:m.roomName,host:!!m.host,players:m.players||[]};state.remote.clear();$('chatHistory').replaceChildren();addChat('',`Connected to ${m.roomName}. Share the invite code and password.`,true);renderRoom();notify('Room '+m.code+' created/joined. You are online.');return}
  if(m.t==='members'&&state.room){state.room.players=m.players||[];state.room.host=!!state.room.players.find(p=>p.id===state.myId)?.host;if(m.notice)addChat('',m.notice,true);renderRoom();return}
  if(m.t==='notice'){addChat('',m.text,true);return}
- if(m.t==='left'){state.room=null;state.remote.clear();if(state.modal==='rooms')renderRoom();return}
- if(m.t==='kicked'){state.room=null;state.remote.clear();notify('Room host removed you.');if(state.modal==='rooms')renderRoom();return}
+ if(m.t==='left'){rememberRoomToken(null);state.room=null;state.remote.clear();if(state.modal==='rooms')renderRoom();return}
+ if(m.t==='kicked'){rememberRoomToken(null);state.room=null;state.remote.clear();notify('Room host removed you.');if(state.modal==='rooms')renderRoom();return}
  if(m.t==='chat'){addChat(m.name||'Driver',m.text||'');return}
  if(m.t==='snapshot'&&state.room){const now=performance.now();const ids=new Set();for(const p of m.players||[]){if(p.id===state.myId)continue;ids.add(p.id);const next={x:Number(p.x)||0,y:Number(p.y)||0,z:Number(p.z)||0,yaw:Number(p.yaw)||0};const remote=state.remote.get(p.id);if(remote){remote.previous=remote.current;remote.current=next;remote.last=now;remote.carId=p.carId}else state.remote.set(p.id,{previous:next,current:next,last:now,carId:p.carId})}
  for(const id of state.remote.keys())if(!ids.has(id))state.remote.delete(id);}
 }
 const inviteCode=new URLSearchParams(location.search).get('room');if(inviteCode){$('joinCode').value=inviteCode.toUpperCase().slice(0,6);$('serverNote').textContent='Invite link detected. Enter the room password to join.'}
 setInterval(()=>{if(state.ws?.readyState===WebSocket.OPEN)sendWS({t:'ping'})},30000);
+if(resumeToken)retryOnReturn();
 setInterval(()=>{if(state.room&&state.playing)sendWS({t:'state',x:Math.round(player.x*100)/100,y:Math.round(player.y*100)/100,z:Math.round(player.z*100)/100,yaw:player.yaw,speed:player.speed})},100);
 // -------- STARTUP --------
 viewerCar=state.carId;resize();updateTouchUI();renderGarage();refreshSettings();requestAnimationFrame(frameLoop);
